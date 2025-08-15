@@ -149,10 +149,10 @@ class YourBuyerAgent(BaseBuyerAgent):
         """
         # IMPLEMENT YOUR PERSONALITY HERE
         return {
-            "personality_type": "custom",  # Change this
-            "traits": ["trait1", "trait2"],  # Define 3-5 traits
-            "negotiation_style": "Description of your approach",
-            "catchphrases": ["phrase1", "phrase2"]  # 2-3 signature phrases
+            "personality_type": "analytical",  # Change this
+            "traits": ["Calm and composed", "consistant", "Realist","Knows the ugly world"],  # Define 3-5 traits
+            "negotiation_style": "tit for tat",
+            "catchphrases": ["All right", "Real","give one take one"]  # 2-3 signature phrases
         }
     
     def generate_opening_offer(self, context: NegotiationContext) -> Tuple[int, str]:
@@ -168,7 +168,7 @@ class YourBuyerAgent(BaseBuyerAgent):
         # IMPLEMENT YOUR OPENING STRATEGY HERE
         
         # Example (replace with your logic):
-        opening_price = int(context.product.base_market_price * 0.7)  # 30% below market
+        opening_price = int(context.product.base_market_price * 0.9)  # 30% below market
         
         # Ensure within budget
         opening_price = min(opening_price, context.your_budget)
@@ -218,9 +218,9 @@ class YourBuyerAgent(BaseBuyerAgent):
         """
         # IMPLEMENT YOUR PERSONALITY PROMPT HERE
         return """
-        I am a [your personality type] buyer who [describe communication style].
-        I typically [describe behavior patterns].
-        My catchphrases include [list some phrases].
+        I am a [Realist] buyer who [talks very reasonable, realistic for price and the good of both side].
+        I typically [try to be equal , fair, and transparent in my communication but when you don't do that anymore my line of communication changes].
+        My catchphrases include [all right, tit for tat, hasta la vista].
         """
 
     # ============================================
