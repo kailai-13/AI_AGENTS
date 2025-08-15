@@ -1,67 +1,50 @@
 
 ---
 
-## **`README.md`**
+# 🥭 AI Agents – Concordia Buyer Negotiation
 
-```markdown
-# Concordia Unified Buyer Agent 🤝
+## 📌 Overview
 
-An intelligent buyer agent for negotiation simulations, compatible with **Concordia** and tested with **Ollama's LLaMA 3.8B** model.  
-It uses a mix of **data-driven negotiation policy** (math rules) + **LLM-powered personality messages** to make effective, budget-safe offers.
-
----
-
-## ✨ Features
-- Concordia-compatible `make_buyer_agent()` factory.
-- Pure numeric negotiation logic for consistent price decisions.
-- LLaMA-based message generation via [Ollama](https://ollama.com/).
-- Personality-driven buyer with memory of recent conversation turns.
-- Flexible — can run in Concordia framework or standalone mode.
-- Multi-scenario testing with **Easy / Medium / Hard** difficulty.
+This project implements an **AI Buyer Agent** for automated negotiations using the **Concordia framework** (if available) and a fallback mode for standalone testing.
+It integrates a **personality-driven negotiation policy** with **numeric constraints** and optional **Ollama LLaMA 3 8B** local LLM support for generating natural language negotiation responses.
 
 ---
 
 ## 📂 Project Structure
+
 ```
-
-.
-├── unified\_buyer\_agent.py      # Main buyer agent class & negotiation logic
-├── test\_unified\_buyer\_multi.py # Test runner with 6 negotiation scenarios
-├── requirements.txt            # Python dependencies
-└── README.md                   # This file
-
-````
+AI_AGENTS/
+│
+├── __pycache__/               # Python bytecode cache
+├── .python-version            # Python version lock file
+├── concordia.py               # Unified Buyer Agent (Concordia-compatible)
+├── interview_negotiation.py   # Example/template for multi-round negotiation
+├── README.md                  # Project documentation
+├── requirements.txt           # Python dependencies
+└── test.py                    # Test cases (easy, medium, hard negotiation scenarios)
+```
 
 ---
 
 ## ⚙ Requirements
 
-1. **Python 3.9+**
-2. [Ollama](https://ollama.com/) installed locally with:
-   ```bash
-   ollama pull llama3:8b
-````
-
-3. Concordia (optional — the code can run without it, with fallbacks).
-
----
-
-## 📦 Installation
+Install all dependencies:
 
 ```bash
-# Clone repository
-git clone https://github.com/yourusername/concordia-buyer-agent.git
-cd concordia-buyer-agent
-
-# Install dependencies
 pip install -r requirements.txt
 ```
 
 ---
 
-## ▶ Running Tests
+## 🚀 Running the Buyer Agent Simulation
 
-Run all 6 negotiation difficulty scenarios:
+Run a single negotiation test:
+
+```bash
+python concordia.py
+```
+
+Run multiple difficulty tests:
 
 ```bash
 python test.py
@@ -69,65 +52,34 @@ python test.py
 
 ---
 
-## 🛠 Example Output
+## 🧪 Test Scenarios
 
-```
-================================================================================
-TEST SCENARIO: Easy 1
-Product: Local Bananas | Market ₹50,000 | Budget ₹60,000
-================================================================================
+The **`test.py`** file contains:
 
-SELLER: Asking ₹55,000 (reasonable price)
-BUYER OFFER: ₹35,000 | Let's be fair, I believe ₹35,000 is a reasonable starting point.
-
-SELLER: Counter offer: ₹50,000
-BUYER: ₹50,000 | Deal accepted at ₹50,000. I’ve done my research.
-
-🎉 DEAL ACCEPTED!
-Final Price: ₹50,000 | Savings: ₹10,000
-```
+* **Easy** – Cooperative seller, quick agreement
+* **Medium** – Balanced back-and-forth
+* **Hard** – Aggressive seller, late concessions
+* **Very Hard** – Tight budget vs high seller price
+* **Randomized** – Random market price & budget
+* **Extreme** – Almost no budget flexibility
 
 ---
 
-## 🧠 How It Works
+## 🤖 LLM Integration
 
-* **Numeric Policy** (`_Policy` class) decides *when* to accept and *how much* to counter.
-* **Personality + Memory** shape *how* to say it, using LLaMA-generated messages.
-* **Fallback Mode**: Runs without Concordia if not installed.
+* Uses **Ollama** for local LLaMA 3.8B inference
+* Falls back to echo mode if Ollama is not installed
+
+To use with Ollama:
+
+```bash
+ollama pull llama3:8b
+```
 
 ---
 
 ## 📜 License
 
-MIT License — feel free to use and modify.
+MIT License – free to use, modify, and distribute.
 
 ---
-
-## 💡 Credits
-
-* [Concordia Framework](https://github.com/concordia-agents/concordia)
-* [Ollama](https://ollama.com/) for local LLM serving
-
-````
-
----
-
-## **`requirements.txt`**
-```txt
-# Core dependencies
-dataclasses; python_version < '3.10'
-typing-extensions
-enum34; python_version < '3.4'
-
-# Optional but recommended
-concordia==0.1.0  # Remove or change version if unavailable
-
-# Local LLM integration
-ollama  # Python client for Ollama (if available)
-
-# Dev & testing
-pytest
-````
-
----
-
