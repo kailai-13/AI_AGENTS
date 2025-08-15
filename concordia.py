@@ -41,7 +41,6 @@ except Exception:  # Concordia not installed
         class LanguageModel:
             def complete(self, prompt: str) -> str: return prompt  # echo
 
-
 # ============================================================
 # ---------- Part 1: Common dataclasses & enums --------------
 # ============================================================
@@ -55,7 +54,6 @@ class Product:
     base_market_price: int
     attributes: Dict[str, Any] = field(default_factory=dict)
 
-
 @dataclass
 class NegotiationContext:
     product: Product
@@ -65,13 +63,11 @@ class NegotiationContext:
     your_offers: List[int]
     messages: List[Dict[str, str]]
 
-
 class DealStatus(str, Enum):
     ONGOING = "ongoing"
     ACCEPTED = "accepted"
     REJECTED = "rejected"
     TIMEOUT = "timeout"
-
 
 # ============================================================
 # ---------- Part 2: Numeric negotiation policy --------------
@@ -85,9 +81,7 @@ class _Cfg:
     late_round: int = 4
     close_gap_pct: float = 0.02
 
-
 CFG = _Cfg()
-
 
 class _Policy:
     """Pure maths — no LLM necessary."""
@@ -129,7 +123,6 @@ class _Policy:
 
         return max(offer, last)
 
-
 # ============================================================
 # ---------- Part 3: Personality & Memory --------------------
 # ============================================================
@@ -139,7 +132,6 @@ class _Memory(associative_memory.AssociativeMemory):  # type: ignore[misc]
     def last_turns(self, k: int = 3) -> str:
         buf = self.retrieve(k)
         return "\n".join(f"{b['role'].capitalize()}: {b['text']}" for b in buf)
-
 
 class _Personality(agent_components.ContextComponent):  # type: ignore[misc]
     def __init__(self):
@@ -157,7 +149,6 @@ class _Personality(agent_components.ContextComponent):  # type: ignore[misc]
             "Speak in 1–2 concise, professional sentences; optionally use one catchphrase "
             f"from: {phrases}. Never exceed the numeric decision you are given.\n"
         )
-
 
 # ============================================================
 # ---------- Part 4: LLM wrapper (Ollama) --------------------
@@ -183,7 +174,6 @@ class _OllamaLLM(language_model.LanguageModel):  # type: ignore[misc]
         except Exception:
             # Fallback echo for environments without Ollama
             return f"(echo) {prompt.splitlines()[-1][:80]}"
-
 
 # ============================================================
 # ---------- Part 5: Unified Buyer Agent ---------------------
@@ -317,7 +307,6 @@ class UnifiedBuyerAgent(
         )
         return self.llm.complete(prompt)
 
-
 # ============================================================
 # ---------- Part 6: Factory & local demo --------------------
 # ============================================================
@@ -328,10 +317,19 @@ def make_buyer_agent(cfg: Optional[Dict[str, Any]] = None) -> UnifiedBuyerAgent:
         model_name=cfg.get("model", "llama3:8b"),
     )
 
+# ---------------- FIXED: Full conversation display -----------
+def print_full_conversation_message(round_num: int, role: str, price: int, message: str):
+    """Print complete conversation messages with proper formatting."""
+    print(f"\n{'='*80}")
+    print(f"ROUND {round_num} - {role.upper()}")
+    print(f"Price: ₹{price:,}")
+    print(f"{'='*80}")
+    print(f"Message:")
+    print(f"{message}")
+    print(f"{'='*80}")
 
-# ---------------- Local demo for template harness -----------
 if __name__ == "__main__":
-    # Quick smoke test with the template’s MockSellerAgent
+    # Quick smoke test with the template's MockSellerAgent
     from random import randint
 
     product = Product(
@@ -348,27 +346,47 @@ if __name__ == "__main__":
     buyer = UnifiedBuyerAgent()
     from pprint import pprint
 
+    print(f"\n🥭 NEGOTIATION SIMULATION: {product.name}")
+    print(f"📊 Market Price: ₹{product.base_market_price:,}")
+    print(f"💰 Buyer Budget: ₹{budget:,}")
+    print(f"📍 Product: {product.quantity} kg {product.quality_grade}-grade from {product.origin}")
+    print("\n" + "="*80)
+
     # Seller mock
     seller_price = int(product.base_market_price * 1.5)
-    seller_msg = f"Premium fruit, asking ₹{seller_price}"
+    seller_msg = f"Premium fruit, asking ₹{seller_price:,}"
     ctx.seller_offers.append(seller_price)
     ctx.messages.append({"role": "seller", "message": seller_msg})
+
+    # Show seller's initial offer
+    print_full_conversation_message(1, "SELLER", seller_price, seller_msg)
 
     offer, msg = buyer.generate_opening_offer(ctx)
     ctx.your_offers.append(offer)
     ctx.messages.append({"role": "buyer", "message": msg})
-    print(f"R1 Buyer: ₹{offer} | {msg[:120]}")
+    
+    # Show buyer's response with FULL message
+    print_full_conversation_message(1, "BUYER", offer, msg)
 
     # simple loop
     for r in range(2, 10):
         ctx.current_round = r
         # naive seller concession
         seller_price = max(int(product.base_market_price * 0.8), int((seller_price + offer) / 2))
-        seller_msg = f"Counter ₹{seller_price}"
+        seller_msg = f"Counter ₹{seller_price:,}"
+        
+        # Show seller's counter
+        print_full_conversation_message(r, "SELLER", seller_price, seller_msg)
+        
         status, offer, msg = buyer.respond_to_seller_offer(ctx, seller_price, seller_msg)
         ctx.your_offers.append(offer)
         ctx.messages.append({"role": "buyer", "message": msg})
-        print(f"R{r} Buyer: ₹{offer} | {msg[:120]}")
+        
+        # Show buyer's FULL response
+        print_full_conversation_message(r, "BUYER", offer, msg)
+        
         if status == DealStatus.ACCEPTED or offer >= seller_price:
-            print("Deal closed.")
-            break
+            print(f"\n🎉 DEAL CLOSED!")
+            print(f"Final Price: ₹{offer:,}")
+            print(f"Savings: ₹{budget - offer:,} under budget")
+            break 
