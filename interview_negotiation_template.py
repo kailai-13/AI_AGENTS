@@ -131,97 +131,88 @@ class BaseBuyerAgent(ABC):
 
 class YourBuyerAgent(BaseBuyerAgent):
     """
-    YOUR BUYER AGENT IMPLEMENTATION
-    
-    Tips for success:
-    1. Stay in character - consistency matters!
-    2. Never exceed your budget
-    3. Aim for the best deal, but know when to close
-    4. Use market price as reference
-    5. Maximum 10 rounds - don't let negotiations timeout
+    Optimized Buyer Agent for higher win rate & savings
     """
     
     def define_personality(self) -> Dict[str, Any]:
-        """
-        TODO: Define your agent's unique personality
-        
-        Choose from: aggressive, analytical, diplomatic, or create custom
-        """
-        # IMPLEMENT YOUR PERSONALITY HERE
         return {
-            "personality_type": "analytical",  # Change this
-            "traits": ["Calm and composed", "consistant", "Realist","Knows the ugly world"],  # Define 3-5 traits
-            "negotiation_style": "tit for tat",
-            "catchphrases": ["All right", "Real","give one take one"]  # 2-3 signature phrases
+            "personality_type": "analytical-diplomatic",
+            "traits": [
+                "Calm under pressure",
+                "Strategic thinker",
+                "Fair but firm",
+                "Values long-term deals",
+                "Reads market trends"
+            ],
+            "negotiation_style": "Starts reasonably low, increases offers gradually, uses fairness and market data as leverage",
+            "catchphrases": [
+                "Let’s be fair to both sides.",
+                "I’ve done my research.",
+                "We can find a middle ground."
+            ]
         }
     
     def generate_opening_offer(self, context: NegotiationContext) -> Tuple[int, str]:
-        """
-        TODO: Generate your opening offer
+        # Start at 70% of market price for strong anchor but not insulting
+        opening_price = int(context.product.base_market_price * 0.70)
         
-        Consider:
-        - Product's base market price
-        - Your budget constraints  
-        - Your personality's approach
-        - Quality grade and origin
-        """
-        # IMPLEMENT YOUR OPENING STRATEGY HERE
-        
-        # Example (replace with your logic):
-        opening_price = int(context.product.base_market_price * 0.9)  # 30% below market
-        
-        # Ensure within budget
+        # Never exceed budget
         opening_price = min(opening_price, context.your_budget)
         
-        message = f"I'll offer ₹{opening_price} for these {context.product.name}."
+        message = (
+            f"Based on the market for {context.product.quality_grade}-grade "
+            f"{context.product.name}, I can offer ₹{opening_price}. "
+            f"{random.choice(self.personality['catchphrases'])}"
+        )
         
         return opening_price, message
     
-    def respond_to_seller_offer(self, context: NegotiationContext, seller_price: int, seller_message: str) -> Tuple[DealStatus, int, str]:
-        """
-        TODO: Implement your response strategy
+    def respond_to_seller_offer(
+        self, context: NegotiationContext, seller_price: int, seller_message: str
+    ) -> Tuple[DealStatus, int, str]:
         
-        Remember:
-        - Analyze if the seller's price is acceptable
-        - Consider how many rounds have passed
-        - Maintain your personality
-        - Know when to accept vs counter-offer
-        """
-        # IMPLEMENT YOUR RESPONSE STRATEGY HERE
+        market_price = context.product.base_market_price
+        rounds_left = 10 - context.current_round
         
-        # Example logic (replace with your strategy):
+        # Accept immediately if price is excellent
+        if seller_price <= market_price * 0.85 and seller_price <= context.your_budget:
+            return DealStatus.ACCEPTED, seller_price, (
+                f"That’s a fair offer at ₹{seller_price}. "
+                f"{random.choice(self.personality['catchphrases'])}"
+            )
         
-        # Check if price is within budget and reasonable
-        if seller_price <= context.your_budget:
-            # Simple acceptance logic - improve this!
-            if seller_price <= context.product.base_market_price * 0.9:
-                return DealStatus.ACCEPTED, seller_price, f"Deal accepted at ₹{seller_price}!"
+        # Determine concession strategy
+        last_offer = context.your_offers[-1] if context.your_offers else int(market_price * 0.7)
         
-        # Counter-offer logic
-        if context.current_round >= 8:  # Getting close to timeout
-            # Make more aggressive moves
-            counter_offer = min(int(seller_price * 0.95), context.your_budget)
+        if rounds_left > 5:
+            # Early stage: slow, small increments
+            increment = int((seller_price - last_offer) * 0.25)
         else:
-            # Normal negotiation
-            counter_offer = min(int(seller_price * 0.85), context.your_budget)
+            # Late stage: bigger moves to close the deal
+            increment = int((seller_price - last_offer) * 0.5)
         
-        message = f"I can go up to ₹{counter_offer}."
+        counter_offer = min(last_offer + increment, context.your_budget)
+        
+        # Avoid overbidding close to seller price
+        if abs(seller_price - counter_offer) <= market_price * 0.02:
+            counter_offer = min(seller_price, context.your_budget)
+        
+        # Message with reasoning
+        message = (
+            f"Considering the market trends and quality, I can go up to ₹{counter_offer}. "
+            f"{random.choice(self.personality['catchphrases'])}"
+        )
         
         return DealStatus.ONGOING, counter_offer, message
     
     def get_personality_prompt(self) -> str:
-        """
-        TODO: Write a detailed prompt for your agent's communication style
-        
-        This should be 3-5 sentences describing how your agent talks,
-        what phrases they use, their tone, etc.
-        """
-        # IMPLEMENT YOUR PERSONALITY PROMPT HERE
-        return """
-        I am a [Realist] buyer who [talks very reasonable, realistic for price and the good of both side].
-        I typically [try to be equal , fair, and transparent in my communication but when you don't do that anymore my line of communication changes].
-        My catchphrases include [all right, tit for tat, hasta la vista].
-        """
+        return (
+            "I am an analytical yet diplomatic buyer. I keep calm and use market data "
+            "to justify my offers. I am fair but firm, valuing win–win outcomes. "
+            "I often say things like 'Let’s be fair to both sides', 'I’ve done my research', "
+            "and 'We can find a middle ground'. My tone is professional and respectful."
+        )
+
 
     # ============================================
     # OPTIONAL: Add helper methods below
@@ -517,6 +508,6 @@ if __name__ == "__main__":
     test_your_agent()
     
     # Uncomment to see how the example agent performs
-    # print("\n\nTESTING EXAMPLE AGENT FOR COMPARISON:")
-    # example_agent = ExampleSimpleAgent("ExampleBuyer")
-    # test_your_agent()
+    #print("\n\nTESTING EXAMPLE AGENT FOR COMPARISON:")
+    #example_agent = ExampleSimpleAgent("ExampleBuyer")
+    
