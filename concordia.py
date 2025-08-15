@@ -1,20 +1,20 @@
 """
-Concordia-compatible Buyer Agent using Llama-3-8B (Ollama)
-
-Save as: concordia_buyer_llama38.py
+Unified Buyer Agent
+-------------------
+• Concordia-compatible  (make_buyer_agent)
+• Works with custom BaseBuyerAgent evaluation template
+• Personality-driven, budget-safe, memory-aware
 """
 
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
-
+from typing import Any, Dict, List, Optional, Tuple
 import subprocess
-import random
-import time
+import re
 
 # ============================================================
-# Graceful imports (Concordia fall-backs if package not present)
+# Graceful Concordia imports ─ fall back to local stubs
 # ============================================================
 try:
     from concordia.components import agent as agent_components
@@ -22,38 +22,28 @@ try:
     from concordia.language_model import language_model
 
     HAVE_CONCORDIA = True
-except Exception:  # noqa: BLE001
+except Exception:  # Concordia not installed
     HAVE_CONCORDIA = False
 
     class agent_components:  # type: ignore
-        class ContextComponent:  # minimal stub
-            def make_pre_act_value(self) -> str:
-                return ""
-
-            def get_state(self):
-                return {}
-
-            def set_state(self, _s):
-                pass
+        class ContextComponent:
+            def make_pre_act_value(self) -> str: return ""
+            def get_state(self): return {}
+            def set_state(self, _): pass
 
     class associative_memory:  # type: ignore
         class AssociativeMemory:
-            def __init__(self):
-                self._buf: List[Dict[str, Any]] = []
-
-            def add_observation(self, obj: Dict[str, Any]):
-                self._buf.append(obj)
-
-            def retrieve(self, k: int = 5):
-                return self._buf[-k:]
+            def __init__(self): self._buf: List[Dict[str, Any]] = []
+            def add_observation(self, obj): self._buf.append(obj)
+            def retrieve(self, k: int = 5): return self._buf[-k:]
 
     class language_model:  # type: ignore
-        class LanguageModel:  # echo stub
-            def complete(self, prompt: str) -> str:
-                return prompt
+        class LanguageModel:
+            def complete(self, prompt: str) -> str: return prompt  # echo
+
 
 # ============================================================
-# Domain / State
+# ---------- Part 1: Common dataclasses & enums --------------
 # ============================================================
 @dataclass
 class Product:
@@ -66,6 +56,16 @@ class Product:
     attributes: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
+class NegotiationContext:
+    product: Product
+    your_budget: int
+    current_round: int
+    seller_offers: List[int]
+    your_offers: List[int]
+    messages: List[Dict[str, str]]
+
+
 class DealStatus(str, Enum):
     ONGOING = "ongoing"
     ACCEPTED = "accepted"
@@ -73,291 +73,302 @@ class DealStatus(str, Enum):
     TIMEOUT = "timeout"
 
 
-@dataclass
-class NegotiationState:
-    round: int = 0
-    max_rounds: int = 10
-    buyer_budget: int = 0
-    seller_min: int = 0
-    last_buyer_offer: Optional[int] = None
-    last_seller_offer: Optional[int] = None
-    history: List[Dict[str, Any]] = field(default_factory=list)
-
-
 # ============================================================
-# Settings
+# ---------- Part 2: Numeric negotiation policy --------------
 # ============================================================
 @dataclass
-class Settings:
-    buyer_open_pct: float = 0.70
-    buyer_accept_pct_market: float = 0.85
-    min_concession_abs: int = 1_000
-    time_pressure_boost: float = 0.03
-    late_round_threshold: int = 4
+class _Cfg:
+    open_anchor_pct: float = 0.70
+    accept_pct_market: float = 0.85
+    min_step: int = 1_000
+    time_boost_pct: float = 0.03
+    late_round: int = 4
     close_gap_pct: float = 0.02
-    show_logs: bool = True
 
 
-CFG = Settings()
-
-# ============================================================
-# LLM wrapper (Ollama)
-# ============================================================
-class OllamaLLM(language_model.LanguageModel):  # type: ignore[misc]
-    """Thin wrapper around the `ollama` CLI."""
-
-    def __init__(self, model_name: str = "llama-3-8b", timeout: int = 30):
-        super().__init__()
-        self.model_name = model_name
-        self.timeout = timeout
-
-    def complete(self, prompt: str) -> str:  # noqa: D401
-        """Send `prompt` to Ollama and return the model's reply."""
-        try:
-            proc = subprocess.run(
-                ["ollama", "run", self.model_name, "--stdin"],
-                input=prompt,
-                text=True,
-                encoding="utf-8",        # ←—— guarantees UTF-8 on Windows
-                capture_output=True,
-                timeout=self.timeout,
-            )
-            out = proc.stdout.strip() or proc.stderr.strip()
-            return out
-        except FileNotFoundError:
-            return f"(ollama-missing) {prompt[:400]}"
-        except subprocess.TimeoutExpired:
-            return "(ollama-timeout) The model did not respond in time."
+CFG = _Cfg()
 
 
-# ============================================================
-# Memory & Personality
-# ============================================================
-class BuyerMemory(associative_memory.AssociativeMemory):  # type: ignore[misc]
-    pass
+class _Policy:
+    """Pure maths — no LLM necessary."""
 
+    @staticmethod
+    def opening_offer(market: int, budget: int) -> int:
+        anchor = int(market * CFG.open_anchor_pct)
+        # If budget is tighter than anchor, open at 90 % of budget (still leaves room)
+        return min(anchor, max(int(budget * 0.9), 1_000))
 
-class BuyerPersonality(agent_components.ContextComponent):  # type: ignore[misc]
-    def __init__(
-        self,
-        persona: str = "analytical-diplomatic",
-        traits: Optional[List[str]] = None,
-        catchphrases: Optional[List[str]] = None,
-    ):
-        super().__init__()
-        self.persona = persona
-        self.traits = traits or ["calm", "data-driven", "fair-but-firm"]
-        self.catchphrases = catchphrases or [
-            "Let's be fair.",
-            "I've done my research.",
-            "We can find a middle ground.",
-        ]
+    @staticmethod
+    def should_accept(price: int, market: int, budget: int) -> bool:
+        return price <= budget and price <= int(market * CFG.accept_pct_market)
 
-    def make_pre_act_value(self) -> str:
-        return (
-            f"You are a buyer agent. Persona: {self.persona}. "
-            f"Traits: {', '.join(self.traits)}.\n"
-            "Communication style: concise (1–2 sentences), professional, politely firm. "
-            f"Use catchphrases sparingly: {', '.join(self.catchphrases)}.\n"
-            "Important constraints: NEVER exceed your budget. Prefer win-win outcomes. "
-            "If closing conditions are met, accept politely.\n"
-        )
-
-    # get_state / set_state inherited from ContextComponent
-
-
-# ============================================================
-# Policy: numeric decision logic only
-# ============================================================
-class BuyerPolicy:
-    """Deterministic numeric negotiation strategy (no LLM involvement)."""
-
-    def opening_offer(self, market_price: int, budget: int) -> int:
-        return min(int(market_price * CFG.buyer_open_pct), budget)
-
-    def should_accept(self, seller_price: int, market_price: int, budget: int) -> bool:
-        return (seller_price <= budget) and (
-            seller_price <= int(market_price * CFG.buyer_accept_pct_market)
-        )
-
-    def counter_offer(
-        self,
+    @staticmethod
+    def counter(
         seller_price: int,
-        market_price: int,
+        market: int,
         budget: int,
-        last_buyer_offer: Optional[int],
+        last_offer: Optional[int],
         round_i: int,
         max_rounds: int,
     ) -> int:
-        last = last_buyer_offer or self.opening_offer(market_price, budget)
+        last = last_offer or _Policy.opening_offer(market, budget)
         rounds_left = max(1, max_rounds - round_i)
 
-        # dynamic concession
-        step_pct = CFG.time_pressure_boost / rounds_left
-        step = max(CFG.min_concession_abs, int(step_pct * market_price))
+        step_pct = CFG.time_boost_pct / rounds_left
+        step = max(CFG.min_step, int(step_pct * market))
 
         target = (
             int(last + 0.25 * (seller_price - last))
-            if rounds_left > CFG.late_round_threshold
+            if rounds_left > CFG.late_round
             else int(last + 0.5 * (seller_price - last))
         )
-        counter = min(target + step, budget)
+        offer = min(target + step, budget)
 
-        # close tiny gaps
-        if abs(seller_price - counter) <= int(CFG.close_gap_pct * market_price):
-            counter = min(seller_price, budget)
+        if abs(seller_price - offer) <= int(CFG.close_gap_pct * market):
+            offer = min(seller_price, budget)
 
-        return max(counter, last)  # never go backwards
+        return max(offer, last)
 
 
 # ============================================================
-# Concordia Agent
+# ---------- Part 3: Personality & Memory --------------------
 # ============================================================
-class ConcordiaBuyerAgent(
-    agent_components.ContextComponent if HAVE_CONCORDIA else object  # type: ignore[misc]
+class _Memory(associative_memory.AssociativeMemory):  # type: ignore[misc]
+    """Wraps Concordia memory; stores full conversation lines."""
+
+    def last_turns(self, k: int = 3) -> str:
+        buf = self.retrieve(k)
+        return "\n".join(f"{b['role'].capitalize()}: {b['text']}" for b in buf)
+
+
+class _Personality(agent_components.ContextComponent):  # type: ignore[misc]
+    def __init__(self):
+        self.type = "data-driven diplomat"
+        self.traits = ["calm", "analytical", "relationship-oriented"]
+        self.catchphrases = ["Let's be fair.", "I've done my research."]
+        super().__init__()
+
+    # -------- Context for every LLM prompt ----------
+    def make_pre_act_value(self) -> str:
+        traits = ", ".join(self.traits)
+        phrases = ", ".join(self.catchphrases)
+        return (
+            f"You are a buyer who is {self.type}. Traits: {traits}. "
+            "Speak in 1–2 concise, professional sentences; optionally use one catchphrase "
+            f"from: {phrases}. Never exceed the numeric decision you are given.\n"
+        )
+
+
+# ============================================================
+# ---------- Part 4: LLM wrapper (Ollama) --------------------
+# ============================================================
+class _OllamaLLM(language_model.LanguageModel):  # type: ignore[misc]
+    """UTF-8 safe wrapper (prompt via stdin)."""
+
+    def __init__(self, model: str = "llama3:8b", timeout: int = 60):
+        super().__init__()
+        self.model, self.timeout = model, timeout
+
+    def complete(self, prompt: str) -> str:
+        try:
+            proc = subprocess.run(
+                ["ollama", "run", self.model],
+                input=prompt,
+                text=True,
+                encoding="utf-8",
+                capture_output=True,
+                timeout=self.timeout,
+            )
+            return (proc.stdout or proc.stderr).strip()
+        except Exception:
+            # Fallback echo for environments without Ollama
+            return f"(echo) {prompt.splitlines()[-1][:80]}"
+
+
+# ============================================================
+# ---------- Part 5: Unified Buyer Agent ---------------------
+# ============================================================
+class UnifiedBuyerAgent(
+    agent_components.ContextComponent if HAVE_CONCORDIA else object  # Concordia
 ):
-    """Buyer agent that merges numeric policy with LLM phrasing."""
+    """
+    One class = one brain.
+    Exposes both Concordia `.act()` and template `.generate_* / respond_*` APIs.
+    """
 
-    def __init__(self, name: str = "BuyerAgent", model_name: str = "llama-3-8b"):
+    def __init__(self, name: str = "Buyer", model_name: str = "llama3:8b"):
         self.name = name
-        self.personality = BuyerPersonality()
-        self.memory = BuyerMemory()
-        self.model = OllamaLLM(model_name=model_name)
-        self.policy = BuyerPolicy()
+        self.personality = _Personality()
+        self.memory = _Memory()
+        self.policy = _Policy()
+        self.llm = _OllamaLLM(model_name)
 
-    # --------------------------------------------------------
-    # Main action loop
-    # --------------------------------------------------------
-    def act(self, observation: Dict[str, Any], state: NegotiationState) -> Dict[str, Any]:
-        product = observation.get("product", {})
-        market = int(product.get("base_market_price", 0))
+    # =====================================================
+    # --- 5A.  Concordia interface (observation → action) --
+    # =====================================================
+    def act(self, observation: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+        """Concordia runner expects this."""
+        product = observation["product"]
+        market = int(product["base_market_price"])
+        budget = state["buyer_budget"]
+        round_i = state["round"]
+        max_rounds = state["max_rounds"]
         seller_offer = observation.get("seller_offer")
 
-        # ========== Opening ==========
-        if seller_offer is None:
-            offer = self.policy.opening_offer(market, state.buyer_budget)
-            text = self._llm_opening(product.get("name", "item"), market, offer)
-            self.memory.add_observation(
-                {"round": state.round, "role": "buyer", "offer": offer, "text": text}
-            )
-            return {"text": text, "offer": offer, "status": DealStatus.ONGOING}
+        if seller_offer is None:  # opening
+            my_offer = self.policy.opening_offer(market, budget)
+            txt = self._msg_open(product["name"], market, my_offer)
+            status = DealStatus.ONGOING
+        else:
+            seller_price = int(seller_offer)
+            if self.policy.should_accept(seller_price, market, budget):
+                my_offer = seller_price
+                txt = self._msg_accept(seller_price)
+                status = DealStatus.ACCEPTED
+            else:
+                my_offer = self.policy.counter(
+                    seller_price, market, budget, state.get("last_buyer_offer"), round_i, max_rounds
+                )
+                txt = self._msg_counter(seller_price, my_offer, product["name"], round_i, max_rounds)
+                status = DealStatus.ONGOING
 
-        seller_price = int(seller_offer)
+        # Memorise
+        self.memory.add_observation({"role": "buyer", "text": txt})
+        return {"text": txt, "offer": my_offer, "status": status}
 
-        # ========== Accept? ==========
-        if self.policy.should_accept(seller_price, market, state.buyer_budget):
-            text = self._llm_accept(product.get("name", "item"), market, seller_price, state)
-            self.memory.add_observation(
-                {
-                    "round": state.round,
-                    "role": "buyer",
-                    "offer": seller_price,
-                    "text": text,
-                    "accepted": True,
-                }
-            )
-            return {"text": text, "offer": seller_price, "status": DealStatus.ACCEPTED}
+    # =====================================================
+    # --- 5B.  Template BaseBuyerAgent API ----------------
+    # =====================================================
+    # These six methods let the same class satisfy the interview template.
 
-        # ========== Counter ==========
-        counter = self.policy.counter_offer(
-            seller_price,
-            market,
-            state.buyer_budget,
-            state.last_buyer_offer,
-            state.round,
-            state.max_rounds,
+    # 1. Personality dict
+    def define_personality(self) -> Dict[str, Any]:
+        return {
+            "personality_type": self.personality.type,
+            "traits": self.personality.traits,
+            "negotiation_style": (
+                "Quotes data, remains calm, aims for win-win, concedes faster near deadline."
+            ),
+            "catchphrases": self.personality.catchphrases,
+        }
+
+    # 2. Opening offer
+    def generate_opening_offer(self, ctx: NegotiationContext) -> Tuple[int, str]:
+        offer = self.policy.opening_offer(ctx.product.base_market_price, ctx.your_budget)
+        msg = self._msg_open(ctx.product.name, ctx.product.base_market_price, offer)
+        self.memory.add_observation({"role": "buyer", "text": msg})
+        return offer, msg
+
+    # 3. Respond to seller
+    def respond_to_seller_offer(  # noqa: D401
+        self, ctx: NegotiationContext, seller_price: int, seller_msg: str
+    ) -> Tuple[DealStatus, int, str]:
+        # Store seller line
+        self.memory.add_observation({"role": "seller", "text": seller_msg})
+
+        market = ctx.product.base_market_price
+        budget = ctx.your_budget
+
+        if self.policy.should_accept(seller_price, market, budget):
+            msg = self._msg_accept(seller_price)
+            self.memory.add_observation({"role": "buyer", "text": msg})
+            return DealStatus.ACCEPTED, seller_price, msg
+
+        offer = self.policy.counter(
+            seller_price, market, budget, ctx.your_offers[-1] if ctx.your_offers else None, ctx.current_round, 10
         )
-        text = self._llm_counter(product.get("name", "item"), market, seller_price, counter, state)
-        self.memory.add_observation(
-            {"round": state.round, "role": "buyer", "offer": counter, "text": text}
-        )
-        return {"text": text, "offer": counter, "status": DealStatus.ONGOING}
+        msg = self._msg_counter(seller_price, offer, ctx.product.name, ctx.current_round, 10)
+        self.memory.add_observation({"role": "buyer", "text": msg})
+        return DealStatus.ONGOING, offer, msg
 
-    # --------------------------------------------------------
-    # LLM helpers
-    # --------------------------------------------------------
-    def _llm_opening(self, item: str, market: int, offer: int) -> str:
+    # 4. Personality prompt (for external evaluation)
+    def get_personality_prompt(self) -> str:
+        return self.personality.make_pre_act_value()
+
+    # -----------------------------------------------------
+    # LLM helper texts
+    # -----------------------------------------------------
+    def _msg_open(self, item: str, market: int, offer: int) -> str:
         prompt = (
-            f"{self.personality.make_pre_act_value()}\n"
-            f"Situation: Opening offer for {item} (market ₹{market}).\n"
-            f"Your offer (numeric): ₹{offer}.\n"
-            "Write a 1–2 sentence buyer message in the persona above, concise and professional. "
-            "Start the message with the offer amount and keep the tone consistent.\n"
+            self.personality.make_pre_act_value()
+            + f"Context: Opening offer for {item}. Market ₹{market}. Your numeric offer: ₹{offer}.\n"
+            "Compose the buyer message."
         )
-        return self.model.complete(prompt)
+        return self.llm.complete(prompt)
 
-    def _llm_accept(self, item: str, market: int, seller_price: int, state: NegotiationState) -> str:
+    def _msg_accept(self, price: int) -> str:
         prompt = (
-            f"{self.personality.make_pre_act_value()}\n"
-            f"Situation: Seller offered ₹{seller_price} for {item}. "
-            f"Your budget: ₹{state.buyer_budget}. Market: ₹{market}.\n"
-            "Write a single-sentence polite acceptance (e.g., 'Deal at ₹X. Thank you.').\n"
+            self.personality.make_pre_act_value()
+            + f"Context: You are accepting the seller's offer of ₹{price}. Reply with one concise sentence."
         )
-        return self.model.complete(prompt)
+        return self.llm.complete(prompt)
 
-    def _llm_counter(
-        self,
-        item: str,
-        market: int,
-        seller_price: int,
-        counter: int,
-        state: NegotiationState,
+    def _msg_counter(
+        self, seller_price: int, counter: int, item: str, round_i: int, max_rounds: int
     ) -> str:
+        recent = self.memory.last_turns(2)
+        urgency = "final" if max_rounds - round_i <= CFG.late_round else "normal"
         prompt = (
-            f"{self.personality.make_pre_act_value()}\n"
-            f"Situation: Seller offered ₹{seller_price} for {item} (market ₹{market}).\n"
-            f"Your numeric decision: counter at ₹{counter}. "
-            f"Budget: ₹{state.buyer_budget}. "
-            f"Round {state.round}/{state.max_rounds}.\n"
-            "Constraints: 1) Do NOT exceed the numeric decision. "
-            "2) Keep it to 1–2 sentences, professional, optional catchphrase. "
-            "3) Give one persuasive reason (market data, quality, partnership).\n"
-            "Write the buyer message now.\n"
+            self.personality.make_pre_act_value()
+            + f"Previous lines:\n{recent}\n\n"
+            f"Seller price: ₹{seller_price}. Your counter decision: ₹{counter}. "
+            f"Round {round_i}/{max_rounds} ({urgency}). "
+            "Write a persuasive 1–2 sentence counter without exceeding the numeric offer."
         )
-        return self.model.complete(prompt)
+        return self.llm.complete(prompt)
 
 
 # ============================================================
-# Factory (what external runners import)
+# ---------- Part 6: Factory & local demo --------------------
 # ============================================================
-def make_buyer_agent(config: Optional[Dict[str, Any]] = None) -> ConcordiaBuyerAgent:
-    cfg = config or {}
-    return ConcordiaBuyerAgent(
+def make_buyer_agent(cfg: Optional[Dict[str, Any]] = None) -> UnifiedBuyerAgent:
+    cfg = cfg or {}
+    return UnifiedBuyerAgent(
         name=cfg.get("name", "ConcordiaBuyer"),
-        model_name=cfg.get("model", "llama-3-8b"),
+        model_name=cfg.get("model", "llama3:8b"),
     )
 
 
-# ============================================================
-# Quick local smoke test (runs without Concordia)
-# ============================================================
-def _local_demo() -> None:
-    product = {"name": "Alphonso Mangoes", "base_market_price": 180_000}
-    state = NegotiationState(
-        round=1,
-        max_rounds=10,
-        buyer_budget=200_000,
-        seller_min=150_000,
-    )
-    buyer = ConcordiaBuyerAgent("DemoBuyer")
-
-    seller_price = int(product["base_market_price"] * 1.5)
-    print(f"R1 Seller asks ₹{seller_price}")
-    out = buyer.act({"product": product, "seller_offer": seller_price}, state)
-    print(f"R1 Buyer offers ₹{out['offer']} :: {out['text'][:120]}")
-
-    for r in range(2, 8):
-        state.round = r
-        seller_price = max(state.seller_min, int((seller_price + out["offer"]) / 2))
-        print(f"R{r} Seller asks ₹{seller_price}")
-        out = buyer.act({"product": product, "seller_offer": seller_price}, state)
-        print(f"R{r} Buyer offers ₹{out['offer']} :: {out['text'][:120]}")
-        if out["status"] == DealStatus.ACCEPTED or out["offer"] >= seller_price:
-            print("Deal reached.")
-            return
-    print("Demo ended without deal.")
-
-
+# ---------------- Local demo for template harness -----------
 if __name__ == "__main__":
-    print("\nRunning local demo of ConcordiaBuyerAgent …\n")
-    _local_demo()
+    # Quick smoke test with the template’s MockSellerAgent
+    from random import randint
+
+    product = Product(
+        name="Alphonso Mangoes",
+        category="Mangoes",
+        quantity=100,
+        quality_grade="A",
+        origin="Ratnagiri",
+        base_market_price=180_000,
+    )
+    budget = 200_000
+    # Minimal evaluation loop
+    ctx = NegotiationContext(product, budget, 0, [], [], [])
+    buyer = UnifiedBuyerAgent()
+    from pprint import pprint
+
+    # Seller mock
+    seller_price = int(product.base_market_price * 1.5)
+    seller_msg = f"Premium fruit, asking ₹{seller_price}"
+    ctx.seller_offers.append(seller_price)
+    ctx.messages.append({"role": "seller", "message": seller_msg})
+
+    offer, msg = buyer.generate_opening_offer(ctx)
+    ctx.your_offers.append(offer)
+    ctx.messages.append({"role": "buyer", "message": msg})
+    print(f"R1 Buyer: ₹{offer} | {msg[:120]}")
+
+    # simple loop
+    for r in range(2, 10):
+        ctx.current_round = r
+        # naive seller concession
+        seller_price = max(int(product.base_market_price * 0.8), int((seller_price + offer) / 2))
+        seller_msg = f"Counter ₹{seller_price}"
+        status, offer, msg = buyer.respond_to_seller_offer(ctx, seller_price, seller_msg)
+        ctx.your_offers.append(offer)
+        ctx.messages.append({"role": "buyer", "message": msg})
+        print(f"R{r} Buyer: ₹{offer} | {msg[:120]}")
+        if status == DealStatus.ACCEPTED or offer >= seller_price:
+            print("Deal closed.")
+            break
