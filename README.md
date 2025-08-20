@@ -1,7 +1,7 @@
 
 ---
 
-# 🥭 AI Agents – Concordia Buyer Negotiation
+# 🥭 AI Agents – Concordia Buyer Negotiation 
 
 ## 📌 Overview
 
