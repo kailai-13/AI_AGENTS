@@ -23,10 +23,10 @@ from datetime import datetime
 # Graceful Concordia imports ─ fall back to local stubs
 # ============================================================
 try:
-    
+    from concordia.components import agent as agent_components
 
     # Associative memory
-    from concordia.associative_memory import basic_associative_memory
+    from concordia.associative_memory import basic_associative_memoryaa
 
     # Language model
     from concordia.language_model import language_model
@@ -34,10 +34,14 @@ try:
 except Exception:  # Concordia not installed
     HAVE_CONCORDIA = False
     
+    class agent_components:  # type: ignore
+        class ContextComponent:
+            def make_pre_act_value(self) -> str: return ""
+            def get_state(self): return {}
+            def set_state(self, _): pass
 
-
-    class basic_associative_memory:  # type: ignore
-        class AssociativeMemoryBank:
+    class associative_memory:  # type: ignore
+        class AssociativeMemory:
             def __init__(self, *args, **kwargs): 
                 self._buf: List[Dict[str, Any]] = []
             def add_observation(self, obj): 
@@ -53,11 +57,6 @@ except Exception:  # Concordia not installed
 # PART 1: DATA STRUCTURES (DO NOT MODIFY)
 # ============================================
 
-class agent_components:  # type: ignore
-    class ContextComponent:
-        def make_pre_act_value(self) -> str: return ""
-        def get_state(self): return {}
-        def set_state(self, _): pass
 @dataclass
 class Product:
     """Product being negotiated"""
@@ -172,7 +171,7 @@ class _NegotiationPolicy:
 
         return max(offer, last)
 
-class _ConcordiaMemory(basic_associative_memory.AssociativeMemoryBank):  # type: ignore[misc]
+class _ConcordiaMemory(associative_memory.AssociativeMemory):  # type: ignore[misc]
     """Enhanced memory that stores full conversation context"""
 
     def __init__(self, *args, **kwargs):
