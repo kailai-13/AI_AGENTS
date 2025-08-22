@@ -40,11 +40,14 @@ except Exception:  # Concordia not installed
             def get_state(self): return {}
             def set_state(self, _): pass
 
-    class associative_memory:  # type: ignore
-        class AssociativeMemory:
-            def __init__(self): self._buf: List[Dict[str, Any]] = []
-            def add_observation(self, obj): self._buf.append(obj)
-            def retrieve(self, k: int = 5): return self._buf[-k:]
+    class basic_associative_memory:  # type: ignore
+        class AssociativeMemoryBank:
+            def __init__(self, *args, **kwargs): 
+                self._buf: List[Dict[str, Any]] = []
+            def add_observation(self, obj): 
+                self._buf.append(obj)
+            def retrieve(self, k: int = 5): 
+                return self._buf[-k:]
 
     class language_model:  # type: ignore
         class LanguageModel:
@@ -168,11 +171,11 @@ class _NegotiationPolicy:
 
         return max(offer, last)
 
-class _ConcordiaMemory(associative_memory.AssociativeMemory):  # type: ignore[misc]
+class _ConcordiaMemory(basic_associative_memory.AssociativeMemoryBank):  # type: ignore[misc]
     """Enhanced memory that stores full conversation context"""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self._conversation_buffer: List[Dict[str, Any]] = []
 
     def add_conversation_turn(self, role: str, message: str, price: Optional[int] = None):
@@ -181,7 +184,11 @@ class _ConcordiaMemory(associative_memory.AssociativeMemory):  # type: ignore[mi
         if price is not None:
             entry["price"] = price
         self._conversation_buffer.append(entry)
-        self.add_observation(entry)
+        # Use add_observation if available, otherwise just store locally
+        try:
+            self.add_observation(entry)
+        except AttributeError:
+            pass  # Fallback mode
 
     def get_recent_turns(self, k: int = 3) -> str:
         """Get recent conversation turns as formatted string"""
