@@ -21,7 +21,7 @@ import random
 # ============================================================
 try:
     from concordia.components import agent as agent_components
-    from concordia.associative_memory import basic_associative_memory
+    from concordia.associative_memory import associative_memory
     from concordia.language_model import language_model
     HAVE_CONCORDIA = True
 except Exception:  # Concordia not installed
@@ -161,8 +161,7 @@ class _NegotiationPolicy:
 
         return max(offer, last)
 
-class _ConcordiaMemory(basic_associative_memory.AssociativeMemoryBank):  # type: ignore[misc]
- # type: ignore[misc]
+class _ConcordiaMemory(associative_memory.AssociativeMemory):  # type: ignore[misc]
     """Enhanced memory that stores full conversation context"""
 
     def __init__(self):
@@ -190,7 +189,7 @@ class _ConcordiaMemory(basic_associative_memory.AssociativeMemoryBank):  # type:
         turns = len(self._conversation_buffer)
         return f"Conversation has {turns} turns. Recent context available."
 
-class _PersonalityComponent(basic_associative_memory.AssociativeMemoryBank):  # type: ignore[misc]
+class _PersonalityComponent(agent_components.ContextComponent):  # type: ignore[misc]
     """Concordia personality component"""
     
     def __init__(self):
@@ -216,13 +215,16 @@ class _PersonalityComponent(basic_associative_memory.AssociativeMemoryBank):  # 
             "Never exceed your numeric budget constraints.\n"
         )
 
-class _OllamaLLM(language_model.LanguageModel):
+class _OllamaLLM(language_model.LanguageModel):  # type: ignore[misc]
+    """Ollama LLM wrapper with UTF-8 safety"""
+
     def __init__(self, model: str = "llama3:8b", timeout: int = 60):
         super().__init__()
         self.model = model
         self.timeout = timeout
 
     def complete(self, prompt: str) -> str:
+        """Generate response using Ollama"""
         try:
             proc = subprocess.run(
                 ["ollama", "run", self.model],
@@ -233,21 +235,10 @@ class _OllamaLLM(language_model.LanguageModel):
                 timeout=self.timeout,
             )
             response = (proc.stdout or proc.stderr).strip()
-            return response if response else "I understand. Let me respond appropriately."
-        except Exception:
-            return "Based on the context, I'll proceed with the negotiation."
-
-    def sample_choice(self, prompt: str, choices: list) -> str:
-        # Example implementation: simple first choice or fallback to complete
-        if choices:
-            return choices[0]
-        else:
-            return self.complete(prompt)
-
-    def sample_text(self, prompt: str) -> str:
-        # Redirect to complete for text generation
-        return self.complete(prompt)
-
+            return response if response else f"I understand. Let me respond appropriately."
+        except Exception as e:
+            # Fallback for environments without Ollama
+            return f"Based on the context, I'll proceed with the negotiation."
 
 # ============================================
 # PART 3: CONCORDIA-ENHANCED BUYER AGENT
