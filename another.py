@@ -23,10 +23,11 @@ from datetime import datetime
 # Graceful Concordia imports ─ fall back to local stubs
 # ============================================================
 try:
-    from concordia.components import agent as agent_components
+    from concordia.typing import entity_component
+ 
 
     # Associative memory
-    from concordia.associative_memory import basic_associative_memoryaa
+    from concordia.associative_memory import associative_memory
 
     # Language model
     from concordia.language_model import language_model
@@ -171,12 +172,21 @@ class _NegotiationPolicy:
 
         return max(offer, last)
 
-class _ConcordiaMemory(associative_memory.AssociativeMemory):  # type: ignore[misc]
-    """Enhanced memory that stores full conversation context"""
+from sentence_transformers import SentenceTransformer
 
+class SBertEmbedder:
+    def __init__(self, model: str = "all-MiniLM-L6-v2"):
+        self.model = SentenceTransformer(model)
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        vecs = self.model.encode(texts, normalize_embeddings=True)
+        return [v.tolist() for v in vecs]
+
+class _ConcordiaMemory(associative_memory.AssociativeMemory):  # type: ignore[misc]
     def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        super().__init__(sentence_embedder=SBertEmbedder(), *args, **kwargs)
         self._conversation_buffer: List[Dict[str, Any]] = []
+
 
     def add_conversation_turn(self, role: str, message: str, price: Optional[int] = None):
         """Add a conversation turn to memory"""
@@ -203,7 +213,7 @@ class _ConcordiaMemory(associative_memory.AssociativeMemory):  # type: ignore[mi
         turns = len(self._conversation_buffer)
         return f"Conversation has {turns} turns. Recent context available."
 
-class _PersonalityComponent(agent_components.ContextComponent):  # type: ignore[misc]
+class _PersonalityComponent(entity_component.ContextComponent):  # type: ignore[misc]
     """Concordia personality component"""
     
     def __init__(self, agent_type: str = "buyer"):
@@ -240,6 +250,26 @@ class _PersonalityComponent(agent_components.ContextComponent):  # type: ignore[
             "Speak in 1-2 professional, concise sentences. "
             f"Never exceed your numeric {'budget' if self.agent_type == 'buyer' else 'minimum price'} constraints.\n"
         )
+
+    # 🔧 Required abstract methods
+    def get_state(self) -> dict:
+        """Return current state of personality"""
+        return {
+            "agent_type": self.agent_type,
+            "type": self.type,
+            "traits": self.traits,
+            "catchphrases": self.catchphrases,
+            "style": self.style
+        }
+
+    def set_state(self, state: dict) -> None:
+        """Restore personality state"""
+        self.agent_type = state.get("agent_type", self.agent_type)
+        self.type = state.get("type", self.type)
+        self.traits = state.get("traits", self.traits)
+        self.catchphrases = state.get("catchphrases", self.catchphrases)
+        self.style = state.get("style", self.style)
+
 
 class _OllamaLLM(language_model.LanguageModel):  # type: ignore[misc]
     """Ollama LLM wrapper with UTF-8 safety"""
