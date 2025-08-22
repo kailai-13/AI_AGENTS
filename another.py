@@ -291,10 +291,22 @@ class _OllamaLLM(language_model.LanguageModel):  # type: ignore[misc]
                 timeout=self.timeout,
             )
             response = (proc.stdout or proc.stderr).strip()
-            return response if response else f"I understand. Let me respond appropriately."
+            return response if response else "I understand. Let me respond appropriately."
         except Exception as e:
-            # Fallback for environments without Ollama
-            return f"Based on the context, I'll proceed with the negotiation."
+            return "Based on the context, I'll proceed with the negotiation."
+
+    # 🔹 Concordia requires these abstract methods:
+    def sample_text(self, prompt: str, **kwargs) -> str:
+        return self.complete(prompt)
+
+    def sample_choice(self, prompt: str, choices: list[str], **kwargs) -> str:
+        """Pick one of the provided choices based on model output"""
+        response = self.complete(prompt + "\nChoices: " + ", ".join(choices))
+        # pick best matching choice
+        for choice in choices:
+            if choice.lower() in response.lower():
+                return choice
+        return choices[0]  # fallback if no clear match
 
 # ============================================
 # PART 3: CONCORDIA-ENHANCED BUYER AGENT
