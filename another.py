@@ -24,7 +24,11 @@ from datetime import datetime
 # ============================================================
 try:
     from concordia.components import agent as agent_components
-    from concordia.associative_memory import associative_memory
+
+    # Associative memory
+    from concordia.associative_memory import basic_associative_memory
+
+    # Language model
     from concordia.language_model import language_model
     HAVE_CONCORDIA = True
 except Exception:  # Concordia not installed
