@@ -10,7 +10,7 @@ It integrates a **personality-driven negotiation policy** with **numeric constra
 
 ---
 
-## 📂 Project Structure
+## 📂 Project Structure 
 
 ```
 AI_AGENTS/
