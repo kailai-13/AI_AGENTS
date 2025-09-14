@@ -7,7 +7,7 @@
 
 This project implements an **AI Buyer Agent** for automated negotiations using the **Concordia framework** (if available) and a fallback mode for standalone testing.
 It integrates a **personality-driven negotiation policy** with **numeric constraints** and optional **Ollama LLaMA 3 8B** local LLM support for generating natural language negotiation responses.
-
+ 
 ---
 
 ## 📂 Project Structure 
